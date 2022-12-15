@@ -1,0 +1,359 @@
+---
+title: "Group Project 2 Group 3"
+author: "Silvia Huang, Linh Le, Shirley Liu, Minh Vo, Yuze Zhang"
+date: "11/8/2022"
+output: pdf_document
+---
+
+# Question 1
+
+```{r warning=FALSE}
+library(tidycensus)
+library(ggplot2)
+library(dplyr)
+library(purrr)
+library(MASS)
+library(stats)
+
+# Question 1
+census_api_key("e014504e02c530c1ab0bcbc6f497dde5f6d5d8d5")
+
+census <- get_acs(geography = "tract",
+                  variables = c('DP05_0001E','DP05_0018E','DP03_0062E','DP02_0065PE',
+                                'DP03_0096PE','DP03_0128PE','DP04_0047PE'),
+                  year = 2019,
+                  output = "wide",
+                  state = "IL",
+                  county = "Cook",
+                  geometry = TRUE)
+
+census <- subset(census, select = c('GEOID','NAME','DP05_0001E','DP05_0018E','DP03_0062E','DP02_0065PE',
+                                    'DP03_0096PE','DP03_0128PE','DP04_0047PE', 'geometry'))
+
+names(census) <- c('geoid','name','totpop','medage','medhhinc','propbac',
+                   'propcov','proppov','proprent','geometry')
+# propcov = how many people have insurance coverage
+# proppov = percentage of people whose income is below the poverty level
+# proprent = proportion of peolpe who rent houses
+
+summary(census)
+```
+
+# Question 2
+```{r}
+census <- na.omit(census)
+mod_single <- lm(propbac ~ medhhinc, data = census)
+mod_new <- lm(formula = propbac ~ medhhinc+totpop+medage+propcov+proppov+proprent, data = census)
+
+# 2a
+r_sq_diff <-  summary(mod_new)$adj.r.squared - summary(mod_single)$adj.r.squared
+
+# 2b
+anova(mod_single, mod_new)
+101496 - 62241
+'The difference in explanatory power between the two models is significant (p < .05), 
+having a difference of 39255 in the residual sum of squares.'
+
+
+# 2c
+t_col <- function(color, percent = 50, name = NULL) {
+  rgb.val <- col2rgb(color)
+  t.col <- rgb(rgb.val[1], rgb.val[2], rgb.val[3],
+               max = 255,
+               alpha = (100 - percent) * 255 / 100,
+               names = name)
+  invisible(t.col)
+}
+
+blue <- t_col("lightblue", perc = 50)
+pink <- t_col("pink", perc = 50, name = "lt.pink")
+
+plot(density(mod_single$residuals), main = "Empirical Densities of the Residuals", 
+     sub  = "Single Predictor Model (Pink) vs. Multiple Predictors Model (Blue)")
+polygon(density(mod_single$residuals), col=blue, border='lightblue')
+polygon(density(mod_new$residuals), col=pink, border='pink')
+
+"
+the multiple predictor model has more residuals that are closer to 0,
+minimize the sum of squares of the residuals more,
+-> improved the fit
+"
+```
+
+# Question 3
+```{r}
+ggplot() +
+  geom_smooth(data = census, mapping = aes(x=medhhinc,y=propbac), method=lm, col = 'red') +
+  geom_smooth(data = census, mapping = 
+                aes(x=totpop+medage+medhhinc+propcov+proppov+proprent, y=propbac), 
+              method=lm, col = 'black') +
+  labs(title = "Regression Lines", 
+       subtitle = "Single Predictor Model (Red) vs. Multiple Predictor Model (Black)") +
+  xlab("Median Household Income") +
+  ylab("Baccalaureate Attainment Rates") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"), 
+        plot.subtitle = element_text(hjust = 0.5))
+
+'
+from ANOVA, all explanatory variables are significant.
+from empirical densities of the residuals, the multiple predictors model is closer to 0
+from R^2, summary(mod_new)$r.squared (0.7148773) is bigger than summary(mod_single)$r.squared (0.5350534)
+-> so, choose the multiple predictors model
+'
+```
+
+
+# Question 4
+```{r}
+# Discuss amongst your group whether each of the predictors fit into one of these three categories:
+# a) Predictors with no significant explanatory power
+summary(mod_single)
+summary(mod_new)
+'totpop and medage have no significant explanatory power'
+
+# b) Predictors with explanatory power, useful as control variables, but without a policy
+# “lever” that decisionmakers could use to increase college degree attainment
+'proprent'
+
+# c) Predictors with both explanatory power and a corresponding policy “lever”
+'medhhinc, propcov, proppov'
+```
+
+# Question 5
+```{r}
+lm5 <- lm(propbac ~ medhhinc+propcov+proppov+proprent, data = census)
+betas <- lm5$coefficients
+# (Intercept)      medhhinc       propcov       proppov      proprent 
+# -5.095751e+01  2.184661e-04  5.628164e-01 -3.770528e-01  2.819339e-01 
+
+# check on correlation matrix
+subset_census9 <- data.frame(census$medhhinc, census$propcov, census$proppov, census$proprent)
+cor(subset_census9)
+
+# adjust
+census_dec <- census
+census_dec$medhhinc <- census_dec$medhhinc + 2000
+census_dec$propcov <- census_dec$propcov + 5.1
+census_dec$propcov[census_dec$propcov >= 100] <- 100
+census_dec$proppov <- census_dec$proppov - 6.9
+census_dec$proppov[census_dec$proppov <= 0] <- 0
+census_dec$proprent <- census_dec$proprent - 0.5
+census_dec$proprent[census_dec$proprent <= 0] <- 0
+
+lm_adj <- lm(propbac ~ medhhinc+propcov+proppov+proprent, data = census_dec)
+summary(lm_adj)
+
+mean(predict(lm5, census_dec) - census$propbac)
+```
+
+# Question 6
+```{r message=FALSE, warning=FALSE}
+us <- unique(fips_codes$state)[1:51]
+
+census2 <- map_df(us, function(x) {
+  get_acs(geography = "tract",
+          variables = c('DP05_0001E','DP02_0065PE'),
+          year = 2019,
+          output = "wide",
+          state = x,
+          geometry = TRUE)
+  })
+
+```
+```{r}
+census2 <- census2[grep("M$",names(census2),invert=TRUE)]
+colnames(census2) <- c('geoid','name','totpop','propbac','geometry')
+
+#created a column Cook and added flag to it
+census2$Cook <- 0
+census2$Cook[grep('Cook County, Illinois', census2$name)] = 1
+
+# 6a) Filter to tracts with non-missing population, non-missing college degree data, and population of at least 100.
+census2 <- na.omit(census2)
+census2 <- subset(census2, census2$totpop >= 100)
+
+# 6b) Calculate the national average for tract-level college degree attainment, using both an
+# equal-weight average as well as weighting by population. For these calculations, exclude
+# Cook County, IL.
+equal_mean <- mean(census2$propbac[census2$Cook == 0])
+weighted_mean <- weighted.mean(census2$propbac[census2$Cook == 0], census2$totpop[census2$Cook == 0])
+
+# 6c) hypothesis test - mean difference
+t.test(census2$propbac[census2$Cook == 1] , mu = equal_mean)
+```
+
+
+# Question 7
+```{r}
+# https://geocoding.geo.census.gov/geocoder/geographies/address?street=455%20Cityfront%20Plaza%20Dr&city=Chicago&state=Illinois&zip=60611&benchmark=4&vintage=4
+# geoid = 17031081403
+
+# a)
+census_nbc <- census[census$geoid == 17031081403,]
+mod_new$fitted.values[census$geoid == 17031081403] #point estimate
+predict(mod_new, newdata = census_nbc, interval = 'confidence', level = 0.9)
+'No, the true college degree attainment for this tract is NOT contained in the 90% confidence interval.'
+
+
+# b)
+mod_w <- lm(propbac ~ medhhinc+totpop+medage+propcov+proppov+proprent, data = census, weights = totpop)
+mod_w$fitted.values[census$geoid == 17031081403]
+predict(mod_w, newdata = census_nbc, interval = 'confidence', level = 0.9)
+
+# c)
+betas <- mvrnorm(n = 10000, mu = coefficients(mod_new), Sigma = vcov(mod_new))
+nbc <- head(as.numeric(cbind(1,census_nbc[,c(5,3,4,7,8,9)])), -1)
+preds <- betas %*% nbc
+mean(preds)
+sd(preds)
+c(mean(preds) - 1.68*sd(preds), mean(preds) + 1.68*sd(preds))
+```
+
+# Question 8
+```{r}
+census_cook_filtered <- census
+census_cook_res <- cbind(census_cook_filtered, mod_new$residuals)
+cook_res_low <- census_cook_res %>% filter(mod_new$residuals < quantile(mod_new$residuals, 0.25))
+summary(census_cook_res)
+summary(cook_res_low)
+```
+
+# Question 9
+```{r}
+# Question 9
+
+# The 10 variables selected:
+# 1. Median age: 'medage' ('DP05_0018E')
+# 2. Proportion of bachelor's degree attainment: 'propbac' ('DP02_0065PE')
+# 3. Proportion of health insurance coverage: 'propcov' ('DP03_0096PE')
+# 4. Proportion of people who rent a house/appt: 'proprent'('DP04_0047PE')
+# 5. Proportion of households with a computer: 'propcomp' ('DP02_0151PE')
+# 6. Estimate Value Owner-occupied units: 'medhouseval' ('DP04_0089E')
+# 7. Proportion of school enrollment: 'propsch' ('DP02_0053PE')
+# 8. Proportion of not US citizen: 'propnotus' ('DP02_0096PE')
+# 9. Proportion of employment (In labor force, Civilian labor force): 'propempl' ('DP03_0004PE')
+# 10. Proportion of vehicles available: 'propveh' ('DP04_0057PE')
+
+var = c('DP03_0128PE', 'DP05_0018E', 'DP02_0065PE', 'DP03_0096PE',
+        'DP02_0151PE', 'DP04_0089E', 'DP02_0053PE', 'DP02_0096PE',
+        'DP03_0004PE', 'DP04_0047PE', 'DP04_0057PE')
+
+census9 <- get_acs(geography = "tract",
+                   variables = var,
+                   year = 2019,
+                   output = "wide",
+                   state = us,
+                   geometry = FALSE)
+
+census9 <- subset(census9, select = c('GEOID','NAME','DP03_0128PE', 'DP05_0018E', 'DP02_0065PE', 'DP03_0096PE',
+                                      'DP02_0151PE', 'DP04_0089E', 'DP02_0053PE', 'DP02_0096PE',
+                                      'DP03_0004PE', 'DP04_0047PE', 'DP04_0057PE'))
+
+names <- c('geoid','name','proppov','medage','propbac','propcov',
+           'propcomp','medhouseval','propsch','propnotus',
+           'propempl','proprent','propveh')
+
+names(census9) <- names
+
+summary(census9)
+
+# 9a
+df9 <- census9
+df9 <- (df9 %>% filter(complete.cases(df9)))[names[3:length(names)]]
+# df9 %>%
+#   group_by(proppov) %>%
+#   summarise(value_non_na = sum(!is.na(value))/n()*100)
+
+# 9b
+require(leaps)
+bestlm <- regsubsets(
+  x = proppov~., data = df9,
+  nvmax = 11, method = "exhaustive")
+summary(bestlm)$which
+summary(bestlm)$adjr2
+
+lm_empty = lm(proppov ~ 1, data = df9)
+lm_full = lm(proppov ~ ., data = df9)
+step(lm_full, direction = 'backward')
+step(lm_empty, scope = formula(lm_full), direction = 'forward')
+
+library(lmtest)
+lm_chosen =  lm(formula = proppov ~ proprent + propempl + medage + propbac + 
+                medhouseval + propcomp + propcov + propsch + propnotus, data = df9)
+summary(lm_chosen) #0.6905
+
+dwtest(lm_chosen, alternative = "two.sided")
+bptest(lm_chosen)
+ks.test(lm_chosen$residuals/summary(lm_chosen)$sigma, pnorm)
+
+# 9c
+RMSE_trans_best = sqrt(mean((df9$proppov-lm_chosen$fitted.values)^2))
+```
+
+# Question 10
+```{r}
+# Question 10
+# plot the histograms
+library(Hmisc)
+hist.data.frame(df9)
+sqrt.proppov <-sqrt(df9$proppov)
+hist(sqrt.proppov)
+log.medhouseval <- log(df9$medhouseval)
+
+hist(log.medhouseval)
+plot(log(df9$propcov),sqrt(df9$proppov))
+
+# transformations
+# sqrt(y)
+lm_trans1 = lm(formula = sqrt(proppov) ~ proprent + propempl + medage + propbac + 
+                 medhouseval + propcomp + propcov + propsch + propnotus, data = df9)
+lm_trans1.pred <- (lm_trans1$fitted.values)^2
+RMSE_trans1 = sqrt(mean((df9$proppov-lm_trans1.pred)^2))
+summary(lm_trans1)$adj.r.squared #0.7209669
+
+dwtest(lm_trans1, alternative = "two.sided")
+bptest(lm_trans1)
+ks.test(lm_trans1$residuals/summary(lm_trans1)$sigma, pnorm)
+
+# both sqrt(y) + log(propcomp)
+lm_trans2 = lm(formula = sqrt(proppov) ~ proprent + propbac + propempl + medage + 
+                 propcov + medhouseval + propsch + sqrt(propcomp) + propnotus, data = df9)
+lm_trans2.pred <- (lm_trans2$fitted.values)^2
+RMSE_trans2 = sqrt(mean((df9$proppov-lm_trans2.pred)^2))
+summary(lm_trans2)$adj.r.squared #0.720845
+# only log(medhouseval)
+lm_trans3 = lm(formula = proppov ~ proprent + propbac + propempl + medage + 
+                 propcov + log(medhouseval) + propsch + propcomp + propnotus, data = df9)
+lm_trans3.pred <- (lm_trans3$fitted.values)^2
+RMSE_trans3 = sqrt(mean((df9$proppov-lm_trans3$fitted.values)^2))
+summary(lm_trans3)$adj.r.squared #0.7094128
+# only sqrt(proppov) + log(medhouseval) + log(propcomp)
+lm_trans4 = lm(formula = sqrt(proppov) ~ proprent + propbac + propempl + medage + 
+                 log(propcov) + medhouseval + propsch + log(propcomp) + propnotus, data = df9)
+lm_trans4.pred <- (lm_trans4$fitted.values)^2
+RMSE_trans4 = sqrt(mean((df9$proppov-lm_trans4.pred)^2))
+summary(lm_trans4)$adj.r.squared #0.7094128
+# sqrt(proppov) + log(medhouseval) 
+lm_trans5 = lm(formula = sqrt(proppov) ~ proprent + propbac + propempl + medage + 
+                 propcov + log(medhouseval) + propsch + propcomp + propnotus, data = df9)
+lm_trans5.pred <- (lm_trans5$fitted.values)^2
+RMSE_trans5 = sqrt(mean((df9$proppov-lm_trans5.pred)^2))
+summary(lm_trans5)$adj.r.squared #0.7359497
+# sqrt(proppov) + log(medhouseval) + I(propempl*propbac) ## biggest adj r^2
+lm_trans6 = lm(formula = sqrt(proppov) ~ proprent + propbac + I(propempl*propbac) + propempl + medage + 
+                 propcov + log(medhouseval) + propsch + propcomp + propnotus, data = df9)
+lm_trans6.pred <- (lm_trans6$fitted.values)^2
+RMSE_trans6 = sqrt(mean((df9$proppov-lm_trans6.pred)^2))
+summary(lm_trans6)$adj.r.squared #0.7367231
+
+#baseline model
+
+
+# 10b
+dwtest(lm_trans6, alternative = "two.sided")
+bptest(lm_trans6)
+ks.test(lm_trans6$residuals/summary(lm_trans6)$sigma, pnorm)
+```
+
+
+
