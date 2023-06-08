@@ -1,2 +1,2 @@
-# Statistical-Analysis
-Projects in Statistical Analysis class at UChicago
+# R-projects
+Various projects in R: Brooklyn housing price prediction, Chicago census data analysis.
